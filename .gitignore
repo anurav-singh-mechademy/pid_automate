@@ -1,0 +1,42 @@
+# Allow-list: everything at the top level is ignored unless re-included below, so client drawings, client tag lists,
+# run outputs, notebooks, experiments and downloads never reach the repository by accident. Add new code folders here.
+/*
+
+# ---- what the pipeline needs to run
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/requirements.txt
+!/batch/
+!/descgen/
+!/descgraph/
+!/pidgraph/
+!/models/
+/models/*
+!/models/rfdetr_pid.pth
+# the LLM judge for scoring descriptions (the rest of descgen_lab is experiments and run logs)
+!/descgen_lab/
+/descgen_lab/*
+!/descgen_lab/__init__.py
+!/descgen_lab/judge_current.py
+
+# ---- inside the code folders: code and small definitions only
+__pycache__/
+*.pyc
+.DS_Store
+*.log
+*.ipynb
+*.pdf
+*.PDF
+*.png
+*.jpg
+*.xlsx
+*.csv
+*.zip
+*.gpickle
+*.graphml
+*.onnx
+*.pt
+*.json
+# the frozen dev / test split (descgen/bench.py reads it)
+!/descgen/desc_split_v2.json
