@@ -59,15 +59,15 @@ aws s3api put-bucket-policy --bucket "$BUCKET" --policy "$(cat <<EOF
 EOF
 )"
 
-# ---------- the functions' role: read pages, write logs ----------
+# ---------- the functions' role: read pages, write logs (left as is if it exists, e.g. made by hand) ----------
 if ! aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
   aws iam create-role --role-name "$ROLE" --description "P&ID model APIs: read input pages, write logs" \
     --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' >/dev/null
+  aws iam attach-role-policy --role-name "$ROLE" --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  aws iam put-role-policy --role-name "$ROLE" --policy-name read-pages --policy-document \
+    "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::$BUCKET/$PREFIX*\"}]}"
   NEW_ROLE=1
 fi
-aws iam attach-role-policy --role-name "$ROLE" --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-aws iam put-role-policy --role-name "$ROLE" --policy-name read-pages --policy-document \
-  "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"arn:aws:s3:::$BUCKET/$PREFIX*\"}]}"
 ROLE_ARN=$(aws iam get-role --role-name "$ROLE" --query Role.Arn --output text)
 [ -z "${NEW_ROLE:-}" ] || sleep 10   # a new role takes a few seconds before Lambda can assume it
 
