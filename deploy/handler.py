@@ -25,7 +25,9 @@ Image.MAX_IMAGE_PIXELS = (
 WEIGHTS = Path(os.environ.get("PID_WEIGHTS", "/opt/models/rfdetr_pid.pth"))
 WEIGHTS_SHA256 = os.environ.get("PID_WEIGHTS_SHA256", "")
 BUILD = dict(commit=os.environ.get("PID_BUILD_COMMIT", "unknown"))
-INPUT_BUCKET = os.environ.get("PID_INPUT_BUCKET", "")   # the one bucket (and key prefix) pages may be read from
+INPUT_BUCKET = os.environ.get(
+    "PID_INPUT_BUCKET", ""
+)  # the one bucket (and key prefix) pages may be read from
 INPUT_PREFIX = os.environ.get("PID_INPUT_PREFIX", "")
 DET_BATCH = 8  # tiles per model.predict call, as in tag_pipeline
 TILE_RANGE = (256, 4096)  # accepted tile sizes (px)
@@ -43,21 +45,41 @@ _DETECTOR = []
 _OCR = {}
 
 
+def cpus():
+    """CPUs this process may actually use (PID_THREADS overrides). Not os.cpu_count(): that counts every CPU the machine
+    has, and one thread per visible CPU in a CPU-limited container made RapidOCR 5-10x slower than threads = CPUs."""
+    if os.environ.get("PID_THREADS"):
+        return max(1, int(os.environ["PID_THREADS"]))
+    n = len(os.sched_getaffinity(0))
+    try:  # cgroup v2 quota, e.g. "400000 100000" = 4 CPUs
+        quota, period = open("/sys/fs/cgroup/cpu.max").read().split()
+        if quota != "max":
+            n = min(n, max(1, int(quota) // int(period)))
+    except (OSError, ValueError):
+        pass
+    return n
+
+
 def detector():
     if not _DETECTOR:
         import torch
 
-        torch.set_num_threads(os.cpu_count() or 1)
+        torch.set_num_threads(cpus())
         _DETECTOR.append(TP.load_rfdetr(WEIGHTS))
     return _DETECTOR[0]
 
 
 def ocr_engine(use_cls):
-    """RapidOCR() as the pipeline's full-page OCR uses it; use_cls=False as its orientation check does."""
+    """RapidOCR as the pipeline's full-page OCR uses it (use_cls=False as its orientation check does), with its
+    threads set to the CPUs available. Thread count does not change what it reads."""
     if use_cls not in _OCR:
-        _OCR[use_cls] = (
-            TP.RapidOCR() if use_cls else TP.RapidOCR(params={"Global.use_cls": False})
-        )
+        params = {
+            "EngineConfig.onnxruntime.intra_op_num_threads": cpus(),
+            "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+        }
+        if not use_cls:
+            params["Global.use_cls"] = False
+        _OCR[use_cls] = TP.RapidOCR(params=params)
     return _OCR[use_cls]
 
 
@@ -106,8 +128,15 @@ def load_image(uri):
 
         bucket, _, key = uri[5:].partition("/")
         # only the configured input location is readable, whatever else the role could reach (no bucket -> nothing)
-        if not INPUT_BUCKET or bucket != INPUT_BUCKET or not key.startswith(INPUT_PREFIX) or ".." in key.split("/"):
-            raise BadRequest(f"image_s3 must be under s3://{INPUT_BUCKET or '<unset>'}/{INPUT_PREFIX}")
+        if (
+            not INPUT_BUCKET
+            or bucket != INPUT_BUCKET
+            or not key.startswith(INPUT_PREFIX)
+            or ".." in key.split("/")
+        ):
+            raise BadRequest(
+                f"image_s3 must be under s3://{INPUT_BUCKET or '<unset>'}/{INPUT_PREFIX}"
+            )
         try:
             data = boto3.client("s3").get_object(Bucket=bucket, Key=key)["Body"].read()
         except Exception as e:
