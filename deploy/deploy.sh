@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Build the model image and deploy the two P&ID model APIs (pid-models-detect, pid-models-ocr) as Lambda functions with
 # IAM-auth function URLs. Safe to re-run: creates what is missing, updates the rest. Run from the repo root:
-#   AWS_PROFILE=ma-tm-admin WEIGHTS_DIR=~/Downloads deploy/deploy.sh
+#   AWS_PROFILE=ma-tm-dev WEIGHTS_DIR=~/Downloads deploy/deploy.sh
+# CALLER_ROLE_ARN (optional) is the one role, besides the account's own users, allowed to upload pages and call the URLs.
 # Needs IAM rights (it creates the functions' role), Docker, and rfdetr_pid.pth in WEIGHTS_DIR.
 set -euo pipefail
 
 REGION=${REGION:-us-east-2}
 NAME=${NAME:-pid-models}
-CALLER_ROLE_ARN=${CALLER_ROLE_ARN:-arn:aws:iam::872719370892:role/admin-int-tm-ma-turboagents-role}  # TurboAgents worker
+CALLER_ROLE_ARN=${CALLER_ROLE_ARN:-}   # e.g. the TurboAgents worker role; unset = same-account users only
 WEIGHTS_DIR=${WEIGHTS_DIR:?set WEIGHTS_DIR to the folder holding rfdetr_pid.pth}
 PREFIX=pages/                 # the only place the functions may read pages from
 EXPIRE_DAYS=7                 # pages are client drawings: delete them after a week
@@ -53,7 +54,7 @@ aws s3api put-bucket-policy --bucket "$BUCKET" --policy "$(cat <<EOF
 {"Version":"2012-10-17","Statement":[
  {"Sid":"TlsOnly","Effect":"Deny","Principal":"*","Action":"s3:*",
   "Resource":["arn:aws:s3:::$BUCKET","arn:aws:s3:::$BUCKET/*"],"Condition":{"Bool":{"aws:SecureTransport":"false"}}},
- {"Sid":"CallerWritesPages","Effect":"Allow","Principal":{"AWS":"$CALLER_ROLE_ARN"},
+ {"Sid":"CallerWritesPages","Effect":"Allow","Principal":{"AWS":"${CALLER_ROLE_ARN:-arn:aws:iam::$ACCOUNT:root}"},
   "Action":["s3:PutObject","s3:GetObject","s3:DeleteObject"],"Resource":"arn:aws:s3:::$BUCKET/$PREFIX*"}]}
 EOF
 )"
@@ -89,10 +90,11 @@ deploy_fn() {   # name handler timeout
   aws lambda wait function-updated-v2 --function-name "$fn"
   aws lambda get-function-url-config --function-name "$fn" >/dev/null 2>&1 \
     || aws lambda create-function-url-config --function-name "$fn" --auth-type AWS_IAM >/dev/null
-  # a function URL call needs both permissions
+  # a function URL call needs both permissions; with no caller role, only the account's own users can call
   for action in lambda:InvokeFunctionUrl lambda:InvokeFunction; do
     sid=caller-${action#lambda:}
     aws lambda remove-permission --function-name "$fn" --statement-id "$sid" >/dev/null 2>&1 || true
+    [ -n "$CALLER_ROLE_ARN" ] || continue
     if [ "$action" = lambda:InvokeFunctionUrl ]; then
       aws lambda add-permission --function-name "$fn" --statement-id "$sid" --action "$action" \
         --principal "$CALLER_ROLE_ARN" --function-url-auth-type AWS_IAM >/dev/null
