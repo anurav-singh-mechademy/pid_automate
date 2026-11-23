@@ -1,8 +1,8 @@
 """Offline test of the model image: run inside the container with networking off and a read-only filesystem.
 
-  docker run --rm --platform linux/arm64 --network none --read-only --tmpfs /tmp --user 1000:1000 \
-    -e PID_ALLOW_FILE=1 -v <pdf>:/samples/sample.pdf:ro -v $PWD/deploy:/test:ro pid-models-test \
-    python /test/test_local.py --page 3
+  docker run --rm --platform linux/arm64 --cpus 6 --network none --read-only --tmpfs /tmp --user 1000:1000 \
+    -e PID_ALLOW_FILE=1 -v <pdf>:/samples/sample.pdf:ro -v $PWD/deploy:/test:ro --entrypoint python pid-models \
+    /test/test_local.py --page 3
 
 Renders one page as the pipeline does (300 DPI), calls handler.detect and handler.ocr the way a function URL would,
 then checks the APIs give the same result as the local pipeline (tag_pipeline.detect_bubbles and ocr_page) once the
