@@ -16,6 +16,7 @@
 !/models/rfdetr_pid.pth
 # the model APIs (Lambda image, entry points, local test)
 !/deploy/
+/deploy/config.env
 # the LLM judge for scoring descriptions (the rest of descgen_lab is experiments and run logs)
 !/descgen_lab/
 /descgen_lab/*

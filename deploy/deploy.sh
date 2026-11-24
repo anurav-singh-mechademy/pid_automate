@@ -1,44 +1,28 @@
 #!/usr/bin/env bash
-# Build the model image and deploy the two P&ID model APIs (pid-models-detect, pid-models-ocr) as Lambda functions with
-# IAM-auth function URLs. Safe to re-run: creates what is missing, updates the rest. Run from the repo root:
-#   AWS_PROFILE=ma-tm-dev WEIGHTS_DIR=~/Downloads deploy/deploy.sh
-# CALLER_ROLE_ARN (optional) is the one role, besides the account's own users, allowed to upload pages and call the URLs.
-# Needs IAM rights (it creates the functions' role), Docker, and rfdetr_pid.pth in WEIGHTS_DIR.
-set -euo pipefail
-
-REGION=${REGION:-us-east-2}
-NAME=${NAME:-pid-models}
-CALLER_ROLE_ARN=${CALLER_ROLE_ARN:-}   # e.g. the TurboAgents worker role; unset = same-account users only
-WEIGHTS_DIR=${WEIGHTS_DIR:?set WEIGHTS_DIR to the folder holding rfdetr_pid.pth}
+# Deploy the two P&ID model APIs (<NAME>-detect, <NAME>-ocr) from an image already pushed with push.sh, as Lambda
+# functions with IAM-auth function URLs, plus their input bucket and role. Safe to re-run: creates what is missing,
+# updates the rest. Reads deploy/config.env.
+#   deploy/deploy.sh                       deploy the image for the current commit
+#   IMAGE_TAG=<tag> deploy/deploy.sh       deploy (or roll back to) any tag already in ECR
+# The first run needs iam:CreateRole and iam:PassRole; if the role <NAME>-lambda-role already exists it is left as is.
+. "$(dirname "$0")/common.sh"
+need AWS_PROFILE AWS_REGION NAME WEIGHTS_SHA256
+CALLER_ROLE_ARN=${CALLER_ROLE_ARN:-}   # optional; empty = same-account users only
 PREFIX=pages/                 # the only place the functions may read pages from
 EXPIRE_DAYS=7                 # pages are client drawings: delete them after a week
 MEMORY_MB=10240               # ~6 vCPUs; threads follow the CPUs Lambda gives
 DETECT_TIMEOUT=300
 OCR_TIMEOUT=900               # the maximum; billed only for time used
 
-export AWS_REGION=$REGION AWS_PAGER=""
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+REGION=$AWS_REGION
 BUCKET=$NAME-input-$ACCOUNT
-REPO=$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/$NAME
 ROLE=$NAME-lambda-role
-COMMIT=$(git rev-parse --short HEAD)
-[ -z "$(git status --porcelain deploy batch/tag_pipeline.py requirements.txt)" ] || { echo "commit deploy/ changes first: the image is tagged with the commit"; exit 1; }
-TAG=$COMMIT-$(shasum -a 256 "$WEIGHTS_DIR/rfdetr_pid.pth" | cut -c1-8)
-echo "account $ACCOUNT, region $REGION, image $REPO:$TAG"
-
-# ---------- image ----------
-aws ecr describe-repositories --repository-names "$NAME" >/dev/null 2>&1 \
-  || aws ecr create-repository --repository-name "$NAME" --image-scanning-configuration scanOnPush=true \
-       --image-tag-mutability IMMUTABLE >/dev/null
-aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}" >/dev/null
-if aws ecr describe-images --repository-name "$NAME" --image-ids imageTag="$TAG" >/dev/null 2>&1; then
-  echo "image $TAG already pushed"
-else
-  # --provenance/--sbom off: Lambda accepts a plain image manifest, not an index with attestations
-  docker buildx build --platform linux/arm64 --provenance=false --sbom=false -f deploy/Dockerfile \
-    --build-context weights="$WEIGHTS_DIR" --build-arg COMMIT="$COMMIT" -t "$REPO:$TAG" --push .
-fi
-IMAGE_URI=$REPO:$TAG
+TAG=${IMAGE_TAG:-$(image_tag)}
+IMAGE_URI=$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/$NAME:$TAG
+aws ecr describe-images --repository-name "$NAME" --image-ids imageTag="$TAG" >/dev/null 2>&1 \
+  || { echo "$IMAGE_URI is not in ECR: run deploy/build.sh and deploy/push.sh first" >&2; exit 1; }
+echo "deploying $IMAGE_URI"
 
 # ---------- input bucket: private, encrypted, TLS only, pages expire, only the caller role writes ----------
 if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
