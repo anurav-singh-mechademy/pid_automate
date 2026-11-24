@@ -44,13 +44,15 @@ def embed(png):
     return W, H, "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def collect(out):
+def collect(out, only=None):
     rows = list(csv.DictReader(open(out / "mastersheet.csv")))
     by_sheet = {}
     for r in rows:
         by_sheet.setdefault(r["sheet"], []).append(r)
     sheets = []
     for name, rs in by_sheet.items():
+        if only and not any(name.startswith(o) for o in only):
+            continue
         png = out / "sheets" / f"tags_{name}_overlay.png"
         if not png.exists():
             continue
@@ -217,10 +219,11 @@ if __name__ == "__main__":
     ap.add_argument("--out", default="tag_viewer_output", help="pipeline output folder (resumable)")
     ap.add_argument("--from", dest="existing", help="view an existing batch output folder; no extraction")
     ap.add_argument("--html", help="output HTML path (default <out>/tag_viewer.html)")
+    ap.add_argument("--sheets", nargs="*", help="only these sheets (names or name prefixes, as in the mastersheet)")
     a = ap.parse_args()
     out = Path(a.existing or a.out)
     if not a.existing:
         if not a.inputs:
             ap.error("give PDF files/folders, or --from <existing output folder>")
         extract(a.inputs, out)
-    write_html(collect(out), Path(a.html) if a.html else out / "tag_viewer.html")
+    write_html(collect(out, a.sheets), Path(a.html) if a.html else out / "tag_viewer.html")

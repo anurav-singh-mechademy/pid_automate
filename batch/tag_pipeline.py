@@ -211,12 +211,16 @@ def load_rfdetr(path):
     return model, names
 
 
+LAST_SIZING = {}                         # evidence of the last bubble sizing (stage trace)
+
+
 def estimate_bubble_px(img):
     """Median diameter (px) of clean, hollow circles on the page, via Hough + ink checks; None if too few."""
     gray = np.asarray(img.convert("L"))
     ink = cv2.dilate((gray < 160).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
     found = cv2.HoughCircles(cv2.medianBlur(gray, 5), cv2.HOUGH_GRADIENT, dp=1, minDist=int(6 * MM), param1=100,
                              param2=40, minRadius=int(HOUGH_MM[0] / 2 * MM), maxRadius=int(HOUGH_MM[1] / 2 * MM))
+    LAST_SIZING.update(hough_ok=[], hough_rejected=[])
     if found is None:
         return None
 
@@ -228,6 +232,9 @@ def estimate_bubble_px(img):
 
     # a bubble outline is almost fully inked, and the band just inside it is mostly empty
     diams = [2 * r for x, y, r in found[0] if ring(x, y, r) >= 0.85 and np.mean([ring(x, y, r * k) for k in (0.88, 0.93)]) <= 0.35]
+    for x, y, r in found[0]:                       # kept for the stage trace: which circles were measured
+        ok = ring(x, y, r) >= 0.85 and np.mean([ring(x, y, r * k) for k in (0.88, 0.93)]) <= 0.35
+        LAST_SIZING["hough_ok" if ok else "hough_rejected"].append([round(float(x)), round(float(y)), round(float(r))])
     return float(np.median(diams)) if len(diams) >= 3 else None
 
 
@@ -246,6 +253,7 @@ def measure_bubble(img, model, names, frags):
     coarse = [b for t in RF_SIZE_TILES for b in detect_bubbles(img, model, names, t)
               if b["conf"] >= RF_SIZE_CONF and has_tag_text(b["bbox"], frags)]
     sizes = [max(b["bbox"][2] - b["bbox"][0], b["bbox"][3] - b["bbox"][1]) for b in coarse]
+    LAST_SIZING["rf_boxes"] = [[round(v) for v in b["bbox"]] for b in coarse]
     rf = BOX_TO_DIAMETER * float(np.median(sizes)) if len(sizes) >= RF_SIZE_MIN else None
     if hough and rf:
         diff = abs(hough - rf) / rf
@@ -390,6 +398,9 @@ def find_stacks(frags):
     return stacks
 
 
+LAST_LOCAL_DROPPED = []                  # local devices removed by the last build_tags call
+
+
 def build_tags(frags, bubbles):
     tags = []
     by_id = {b["bubble_id"]: b for b in bubbles}
@@ -451,6 +462,7 @@ def build_tags(frags, bubbles):
             return bool(m and LOCAL_DEVICE_RE.match(m.group(1)))
         dropped = [t for t in tags if is_local(t)]
         tags = [t for t in tags if not is_local(t)]
+        LAST_LOCAL_DROPPED[:] = dropped           # kept for the stage trace (batch_tags writes it to steps/)
         codes = sorted({TAG_LETTERS_RE.search(t["tag"]).group(1) for t in dropped})
         print(f"  ignored {len(dropped)} local devices with no DCS signal: {', '.join(codes) or '-'}")
     return sorted(tags, key=lambda t: -t["confidence"])

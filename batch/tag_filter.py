@@ -18,7 +18,10 @@ General stages (switch with `stages`; all on by default). They learn from the ba
   split     one read holding several tags of side-by-side bubbles ('FT-14011401', 'XZA-3127C-CS3127D-CS...') becomes
             one row per tag
   date      a date ('28-SEP-2021', revision tables)
-  unread    no letter code + number at all ('XZA', 'VLD', 'M', '034-1101'): a bubble whose text was not read
+  placeholder  the number is not assigned yet: X's where the loop number goes ('HS-XXXX', 'AE-XXXXA', 'HS-X594',
+            'VE-XXXXX1', '11PT-XXXXA', 'XXX-000X', 'XXXXXXXXA'), drawn in typical details and legends; an X after
+            the digits is an instance letter and stays ('VE-2120X', '11VE-2120X1')
+  unread   no letter code + number at all ('XZA', 'VLD', 'M', '034-1101'): a bubble whose text was not read
   table     free text inside a ruled table (revision / title block, note and data tables): grids of closed rectangular
             cells found in the page's long straight lines; needs the page images (`pages`)
   format    free text whose shape (digits / letter runs / dashes) is none of the batch's bubble tag formats, give or
@@ -34,7 +37,7 @@ import wordninja
 LETTERS = re.compile(r"(?:^|-)([A-Z]{1,6})-\d")
 TAGLIKE = re.compile(r"^\d*[A-Z]{1,6}-?\d{2,5}[A-Z]?(?:-\d+)?$|^\d+$|^[A-Z]-?\d")    # tag, number, or tag fragment
 FREE_TEXT = ("text", "text_near_bubble", "stack")
-STAGES = ("repair", "split", "date", "unread", "format", "caption")     # "table": available, off by default
+STAGES = ("repair", "split", "date", "placeholder", "unread", "format", "caption")   # "table": available, off by default
 DATE = re.compile(r"^\d{1,2}-(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-\d{2,4}$")
 HAS_TAG = re.compile(r"[A-Z]{1,6}-?(?:\d{2,}|XXX)")       # XXX: number not yet assigned (drafting placeholder)
 FORMAT_MIN = (3, 0.02)        # a format is the batch's own when >= 3 bubble reads and >= 2 % of them have it
@@ -44,6 +47,24 @@ FIX_DIGIT = str.maketrans("OQDIL", "00011")    # OCR letter-for-digit confusions
 def letters_of(tag):
     m = LETTERS.search(tag)
     return m.group(1) if m else ""
+
+
+def is_placeholder(tag):
+    """True when the tag's number is a drafting placeholder: the number field starts with X ('HS-XXXX', 'HS-X594',
+    'VE-XXXXX1'), the letter code is all X over a zero number ('XXX-000X'), or the read is nothing but X's."""
+    t = str(tag).upper().strip()
+    if re.fullmatch(r"X{3,}[A-Z]?\d?", t.replace("-", "")):
+        return True
+    parts = t.split("-")
+    for i, p in enumerate(parts[:-1]):
+        if not re.fullmatch(r"\d{0,3}[A-Z]{1,6}", p):
+            continue
+        nxt = parts[i + 1]
+        if re.fullmatch(r"X[0-9X]*[A-Z]?\d?", nxt):
+            return True
+        if re.fullmatch(r"X{2,}", p) and re.fullmatch(r"[0X]+[A-Z]?", nxt):
+            return True
+    return False
 
 
 def bubble_codes(rows):
@@ -206,6 +227,8 @@ def classify(row, codes, read_as_itself, loops_read, st, fmts):
     L = letters_of(tag)
     if "date" in st and DATE.match(tag):
         return "date"
+    if "placeholder" in st and is_placeholder(tag):
+        return "placeholder"
     if "unread" in st and not HAS_TAG.search(tag):
         return "unread"
     if re.fullmatch(r"HV[A-Z]{1,4}", L):
