@@ -39,6 +39,29 @@ agent ── signed POST {image_s3, ...} ──▶ <NAME>-ocr URL    ──▶ J
 - `regions` mode reads only the listed areas, each turned by `rotate` (what the orientation check does: 4 areas × 4 rotations in one call).
 - Returns `lines: [{text, score, quad, rot, region_id}]`, with text and scores raw from RapidOCR.
 
+### prepare (modes of the ocr function)
+
+All the PDF and pixel work, so the caller needs no PDFium, OpenCV or Pillow. Sent to the **ocr function's URL** with
+`mode: "pages"` or `mode: "prepare"` (no separate function, so deploying it needs no IAM changes). The caller uploads
+the PDF once to `pages/`. The functions' role writes the PNG and JPEG through the input bucket's policy
+(`FunctionsWritePages`, set by `deploy.sh`). Each call logs one line with its mode, status and duration.
+
+```json
+{"mode": "pages", "pdf_s3": "s3://<bucket>/pages/<run>/<sha12>.pdf", "pages": [2, 3]}
+{"mode": "prepare", "pdf_s3": "s3://<bucket>/pages/<run>/<sha12>.pdf", "page": 3, "out_key": "pages/<run>/<sheet>",
+ "dpi": 300, "rotation": null, "orientation": {...}, "hough": {...}, "viewer": {...}, "render_md5": false}
+```
+- `pages` mode returns `page_count` and the 72 dpi gray `fingerprints` per page (the batch inventory's duplicate check).
+- `prepare` mode renders the page, decides its rotation (unless `rotation` is given), turns it, writes
+  `<out_key>.png` (the page `ocr` and `detect` then read) and `<out_key>.jpg` (the viewer image), and runs the Hough
+  bubble sizing. It returns `page_s3`, `jpeg_s3`, `size`, `rotation`, `orient_scores`, `orient_lines` (the raw reads,
+  in page coordinates, for the caller to re-score), `bubble_px`, `hough_ok`, `hough_rejected` and `timing_ms`.
+- `orientation`, `hough` and `viewer` carry the caller's constants (defaults are the pipeline's: `handler.ORIENT_DEFAULTS`,
+  `HOUGH_DEFAULTS`, `VIEWER_DEFAULTS`), so a threshold change needs no redeploy. Unknown fields are rejected.
+- A missing or expired PDF is `404`; a bad page, rotation or parameter is `400`. The same request writes the same keys.
+- Spec: the "P&ID prepare endpoint spec" doc. `test_local.py` checks every output against the pipeline's own
+  `render_page`, `detect_orientation` and `estimate_bubble_px`, upright and on a sideways (`/Rotate 90`) copy.
+
 Errors come back as `400 {"error": ...}` for a bad request (including an `image_s3` outside the input bucket) and `500` for a failure.
 
 ### Calling it

@@ -31,6 +31,83 @@ def same_boxes(a, b, tol=0.5):
     )
 
 
+def check_prepare(pdf, page):
+    """The ocr function's prepare and pages modes vs the pipeline's own functions (render_page, batch_tags' fingerprint,
+    detect_orientation, estimate_bubble_px, pipeline_viewer's JPEG), upright and on a sideways copy of the page."""
+    import hashlib
+    import io
+
+    from PIL import Image
+    from pdfrender import page_count, render_page
+
+    ok = True
+    n = page_count(pdf)
+    t = time.time()
+    pages, _ = call(handler.ocr, dict(mode="pages", pdf_s3=f"file://{pdf}"))
+    want = {str(i): hashlib.md5(render_page(pdf, i, 72, gray=True).tobytes()).hexdigest() for i in range(n)}
+    match = pages["page_count"] == n and pages["fingerprints"] == want
+    print(f"prepare pages: {n} pages, {time.time() - t:.1f}s -> {'MATCH' if match else 'MISMATCH'}")
+    ok &= match
+
+    # a sideways copy: the same page saved with /Rotate 90, as a scanned-sideways sheet arrives
+    import pypdfium2 as pdfium
+    side = "/tmp/sideways.pdf"
+    doc = pdfium.PdfDocument(pdf)
+    keep = pdfium.PdfDocument.new(); keep.import_pages(doc, [page]); keep[0].set_rotation((keep[0].get_rotation() + 90) % 360)
+    keep.save(side); keep.close(); doc.close()
+
+    for label, src, pg in (("upright", pdf, page), ("sideways", side, 0)):
+        t = time.time()
+        out, size = call(handler.ocr, dict(mode="prepare", pdf_s3=f"file://{src}", page=pg,
+                                               out_key=f"file:///tmp/prepare/{label}", render_md5=True))
+        img = TP.load_page(Path(src), pg)
+        rot, scores = TP.detect_orientation(img)
+        turned = img.rotate(rot, expand=True) if rot else img
+        px = TP.estimate_bubble_px(turned)
+        rescored = {k: 0 for k in (0, 90, 180, 270)}                      # the worker re-scores orient_lines
+        for ln in out["orient_lines"]:
+            q = np.asarray(ln["quad"]); dx, dy = np.ptp(q[:, 0]), np.ptp(q[:, 1])
+            wide = dy >= 1.5 * dx if ln["rot"] in (90, 270) else dx >= 1.5 * dy
+            if ln["score"] >= TP.ORIENT_MIN_CONF and wide:
+                rescored[ln["rot"]] += len(TP.clean_text(ln["text"]))
+        png = Image.open(out["page_s3"][7:]); jpg = Image.open(out["jpeg_s3"][7:])
+        k = min(1.0, 4000 / max(turned.size))
+        checks = {
+            "render md5": out["render_md5"] == hashlib.md5(img.tobytes()).hexdigest(),
+            "rotation": out["rotation"] == rot,
+            "orientation scores": out["orient_scores"] == {str(a): b for a, b in scores.items()},
+            "re-scored lines": rescored == scores,
+            "page png pixels": png.size == turned.size and np.array_equal(np.asarray(png.convert("RGB")), np.asarray(turned)),
+            "size": out["size"] == list(turned.size),
+            "hough": out["bubble_px"] == px and out["hough_ok"] == TP.LAST_SIZING["hough_ok"]
+                     and out["hough_rejected"] == TP.LAST_SIZING["hough_rejected"],
+            "viewer jpeg size": jpg.size == ((round(turned.size[0] * k), round(turned.size[1] * k)) if k < 1 else turned.size),
+        }
+        bad = [c for c, v in checks.items() if not v]
+        print(f"prepare {label}: rotation {out['rotation']} (pipeline {rot}), bubble {out['bubble_px']} (pipeline {px}), "
+              f"{len(out['hough_ok'])} clean circles, {size / 1e3:.0f} KB, {time.time() - t:.1f}s wall, timing {out['timing_ms']}"
+              f" -> {'MATCH' if not bad else 'MISMATCH ' + ', '.join(bad)}")
+        ok &= not bad
+    ok &= out["rotation"] != 0                                             # the sideways copy must be turned
+
+    # given rotation: no orientation reads
+    out, _ = call(handler.ocr, dict(mode="prepare", pdf_s3=f"file://{pdf}", page=page, rotation=0,
+                                        out_key="file:///tmp/prepare/given"))
+    given = out["rotation"] == 0 and out["orient_lines"] == [] and out["orient_scores"] == {}
+    print(f"prepare given rotation: {'OK' if given else 'WRONG'}")
+    ok &= given
+
+    # errors: page out of range -> 400, missing PDF -> 404, unknown parameter -> 400
+    for req, want_status in ((dict(mode="prepare", pdf_s3=f"file://{pdf}", page=n, out_key="file:///tmp/prepare/x"), 400),
+                             (dict(mode="pages", pdf_s3="file:///tmp/no-such.pdf"), 404),
+                             (dict(mode="prepare", pdf_s3=f"file://{pdf}", page=page, out_key="file:///tmp/prepare/x",
+                                   hough=dict(bogus=1)), 400)):
+        r = handler.ocr(dict(requestContext={}, body=json.dumps(req)))
+        print(f"prepare error: {r['statusCode']} (want {want_status}) {json.loads(r['body'])}")
+        ok &= r["statusCode"] == want_status
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pdf", default="/samples/sample.pdf")
@@ -128,6 +205,8 @@ def main():
         f"quads on page: {inside}"
     )
     ok &= inside
+
+    ok &= check_prepare(args.pdf, args.page)
 
     # bad request -> 400
     out = handler.detect(

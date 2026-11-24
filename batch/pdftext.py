@@ -148,14 +148,16 @@ def _shx(pg, f):
 
 def exact_frags(pdf, page_no=0, autorot=0, dpi=DPI):
     """(frags, source) with source 'text layer' / 'SHX text' / 'text layer + SHX text', or (None, reason)."""
-    doc = pdfium.PdfDocument(str(pdf))
-    try:
-        pg = doc[page_no]
-        f, (Wp, Hp) = _display(pg)
-        words = _words(pg.get_textpage(), f)
-        shx = _shx(pg, f)
-    finally:
-        doc.close()
+    from pdfrender import PDFIUM_LOCK                      # PDFium is not thread-safe
+    with PDFIUM_LOCK:
+        doc = pdfium.PdfDocument(str(pdf))
+        try:
+            pg = doc[page_no]
+            f, (Wp, Hp) = _display(pg)
+            words = _words(pg.get_textpage(), f)
+            shx = _shx(pg, f)
+        finally:
+            doc.close()
     k = dpi / 72
     W, H = Wp * k, Hp * k
     out, src = [], []

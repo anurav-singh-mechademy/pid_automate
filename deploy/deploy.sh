@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the two P&ID model APIs (<NAME>-detect, <NAME>-ocr) from an image already pushed with push.sh, as Lambda
+# Deploy the two P&ID model APIs (<NAME>-detect, and <NAME>-ocr which also serves the prepare modes) from an image already pushed with push.sh, as Lambda
 # functions with IAM-auth function URLs, plus their input bucket and role. Safe to re-run: creates what is missing,
 # updates the rest. Reads deploy/config.env.
 #   deploy/deploy.sh                       deploy the image for the current commit
@@ -34,14 +34,7 @@ aws s3api put-bucket-encryption --bucket "$BUCKET" --server-side-encryption-conf
   '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
 aws s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" --lifecycle-configuration \
   "{\"Rules\":[{\"ID\":\"expire-pages\",\"Status\":\"Enabled\",\"Filter\":{\"Prefix\":\"$PREFIX\"},\"Expiration\":{\"Days\":$EXPIRE_DAYS}}]}"
-aws s3api put-bucket-policy --bucket "$BUCKET" --policy "$(cat <<EOF
-{"Version":"2012-10-17","Statement":[
- {"Sid":"TlsOnly","Effect":"Deny","Principal":"*","Action":"s3:*",
-  "Resource":["arn:aws:s3:::$BUCKET","arn:aws:s3:::$BUCKET/*"],"Condition":{"Bool":{"aws:SecureTransport":"false"}}},
- {"Sid":"CallerWritesPages","Effect":"Allow","Principal":{"AWS":"${CALLER_ROLE_ARN:-arn:aws:iam::$ACCOUNT:root}"},
-  "Action":["s3:PutObject","s3:GetObject","s3:DeleteObject"],"Resource":"arn:aws:s3:::$BUCKET/$PREFIX*"}]}
-EOF
-)"
+# (the bucket policy is set after the role exists: it names the role)
 
 # ---------- the functions' role: read pages, write logs (left as is if it exists, e.g. made by hand) ----------
 if ! aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
@@ -55,17 +48,31 @@ fi
 ROLE_ARN=$(aws iam get-role --role-name "$ROLE" --query Role.Arn --output text)
 [ -z "${NEW_ROLE:-}" ] || sleep 10   # a new role takes a few seconds before Lambda can assume it
 
+# bucket policy: TLS only; the caller role writes pages (the PDF); the functions' role writes the prepare mode's
+# page PNG and viewer JPEG. Granted here, on the bucket, so no IAM permission is needed (a role policy would need one).
+aws s3api put-bucket-policy --bucket "$BUCKET" --policy "$(cat <<EOF
+{"Version":"2012-10-17","Statement":[
+ {"Sid":"TlsOnly","Effect":"Deny","Principal":"*","Action":"s3:*",
+  "Resource":["arn:aws:s3:::$BUCKET","arn:aws:s3:::$BUCKET/*"],"Condition":{"Bool":{"aws:SecureTransport":"false"}}},
+ {"Sid":"CallerWritesPages","Effect":"Allow","Principal":{"AWS":"${CALLER_ROLE_ARN:-arn:aws:iam::$ACCOUNT:root}"},
+  "Action":["s3:PutObject","s3:GetObject","s3:DeleteObject"],"Resource":"arn:aws:s3:::$BUCKET/$PREFIX*"},
+ {"Sid":"FunctionsWritePages","Effect":"Allow","Principal":{"AWS":"$ROLE_ARN"},
+  "Action":"s3:PutObject","Resource":"arn:aws:s3:::$BUCKET/$PREFIX*"}]}
+EOF
+)"
+
 # ---------- functions + IAM-auth URLs, callable by the caller role only ----------
-deploy_fn() {   # name handler timeout
+deploy_fn() {   # name handler timeout [memory MB]
+  local mem=${4:-$MEMORY_MB}
   local fn=$NAME-$1 env="Variables={PID_INPUT_BUCKET=$BUCKET,PID_INPUT_PREFIX=$PREFIX}"
   if aws lambda get-function --function-name "$fn" >/dev/null 2>&1; then
     aws lambda update-function-code --function-name "$fn" --image-uri "$IMAGE_URI" >/dev/null
     aws lambda wait function-updated-v2 --function-name "$fn"
-    aws lambda update-function-configuration --function-name "$fn" --role "$ROLE_ARN" --memory-size $MEMORY_MB \
+    aws lambda update-function-configuration --function-name "$fn" --role "$ROLE_ARN" --memory-size $mem \
       --timeout "$3" --ephemeral-storage Size=2048 --environment "$env" --image-config "Command=$2" >/dev/null
   else
     aws lambda create-function --function-name "$fn" --package-type Image --code ImageUri="$IMAGE_URI" \
-      --architectures arm64 --role "$ROLE_ARN" --memory-size $MEMORY_MB --timeout "$3" --ephemeral-storage Size=2048 \
+      --architectures arm64 --role "$ROLE_ARN" --memory-size $mem --timeout "$3" --ephemeral-storage Size=2048 \
       --environment "$env" --image-config "Command=$2" \
       --description "P&ID model API ($1), image $TAG" >/dev/null
     aws logs create-log-group --log-group-name "/aws/lambda/$fn" 2>/dev/null || true
