@@ -180,7 +180,7 @@ def aux_slots(sheet, bbox, letters, lead, s):
     d_a = next(d for d, i in near if i == a)
     if far and terms[far[0][1]]["group"] == A["group"] and d_a < 50 and far[0][0] < 50:
         # both ways reach the same item at once: a bridle / two nozzles of one item
-        s["item"] = slot(item_name(A, system, prof), f"both ways along the pipe lead to '{A['tag'] or A['text']}'", 0.7)
+        s["item"] = slot(item_name(A, system, prof), f"both ways along the pipe lead to '{A.get('tag') or A['text']}'", 0.7)
         return
     b = next((i for _, i in far if terms[i]["group"] != A["group"] and
               not (terms[i]["type"] == A["type"] == "item" and terms[i]["role"] == A["role"])), None)

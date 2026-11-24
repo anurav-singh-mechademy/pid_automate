@@ -7,7 +7,7 @@
 # 3. per page: tags_<name>_p<n>.csv + _overlay.png in <out>/sheets/, one ledger row in <out>/ledger.csv
 #    (re-running skips every page already in the ledger with status ok)
 # 4. mastersheet: all tags of all processed pages -> <out>/mastersheet.csv and .xlsx (all rows + unique tags per sheet)
-import csv, hashlib, re, sys, time, traceback, zipfile
+import csv, hashlib, json, re, sys, time, traceback, zipfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -16,11 +16,11 @@ from tag_pipeline import *            # noqa: F401,F403 - the notebook cell's fu
 import tag_pipeline as TP
 
 SRC, OUT = Path(sys.argv[1]), Path(sys.argv[2])
-SHEETS, SOURCES = OUT / "sheets", OUT / "_sources"
+SHEETS, SOURCES, STEPS = OUT / "sheets", OUT / "_sources", OUT / "steps"
 LEDGER, INVENTORY = OUT / "ledger.csv", OUT / "inventory.csv"
 LEDGER_COLS = ["out_name", "file", "page", "fingerprint", "status", "seconds", "rotation", "bubble_mm", "size_method",
                "bubbles", "tags", "tags_grammar_ok", "error"]
-for d in (SHEETS, SOURCES):
+for d in (SHEETS, SOURCES, STEPS):
     d.mkdir(parents=True, exist_ok=True)
 
 # ---------- 1. unzip ----------
@@ -83,14 +83,24 @@ for n, r in enumerate(todo, 1):
     led = dict(out_name=r["out_name"], file=r["file"], page=r["page"], fingerprint=r["fingerprint"])
     try:
         page = load_page(Path(r["file"]), r["page"])
-        rotation, _ = detect_orientation(page) if AUTO_ORIENT else (0, {})
+        rotation, orient_scores = detect_orientation(page) if AUTO_ORIENT else (0, {})
         if rotation:
             page = page.rotate(rotation, expand=True)
         fragments = ocr_page(page, ocr_engine)
-        bubble_px, size_method, _ = measure_bubble(page, rf_model, rf_names, fragments)
+        bubble_px, size_method, size_note = measure_bubble(page, rf_model, rf_names, fragments)
         bubbles = detect_multiscale(page, rf_model, rf_names, choose_tile(bubble_px))
         attach(fragments, bubbles)
         tags = build_tags(fragments, bubbles)
+        # stage trace: every intermediate of this page, for batch/pipeline_viewer.py (step-by-step view)
+        rnd = lambda b: [round(v) for v in b]
+        json.dump(dict(rotation=rotation, orient_scores={str(k): v for k, v in orient_scores.items()}, size=page.size,
+                       bubble_px=bubble_px, size_method=size_method, size_note=size_note, tile=choose_tile(bubble_px),
+                       frags=[dict(text=f["text"], words=f["words"], score=round(f["score"], 3), bbox=rnd(f["bbox"]), rot=f["rot"],
+                                   bubble_id=f["bubble_id"], dist_mm=f["dist_mm"], inside=f["inside"]) for f in fragments],
+                       bubbles=[dict(id=b["bubble_id"], bbox=rnd(b["bbox"]), conf=round(b["conf"], 3), label=b["label"],
+                                     tile=b.get("tile")) for b in bubbles],
+                       tags=tags, local_dropped=list(TP.LAST_LOCAL_DROPPED), sizing=dict(TP.LAST_SIZING)),
+                  open(STEPS / f"{r['out_name']}.json", "w"), default=str)
         out_csv = SHEETS / f"tags_{r['out_name']}.csv"
         with open(out_csv, "w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=list(tags[0]) if tags else ["tag"]); w.writeheader(); w.writerows(tags)
