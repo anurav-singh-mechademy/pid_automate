@@ -1,0 +1,4 @@
+*
+!requirements.txt
+!batch/tag_pipeline.py
+!deploy/handler.py
