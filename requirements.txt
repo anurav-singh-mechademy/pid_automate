@@ -1,5 +1,5 @@
-# Python 3.11. Versions as tested.
-pymupdf==1.28.2
+# Python 3.12.9. Versions as tested. No AGPL dependencies (PDF rendering and text: pypdfium2).
+pypdfium2==5.15.2
 rapidocr==3.10.0
 onnxruntime==1.31.0
 rfdetr==1.11.2

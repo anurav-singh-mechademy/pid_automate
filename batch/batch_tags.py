@@ -40,13 +40,12 @@ pdfs = sorted(filter(is_pdf, SRC.iterdir())) + sorted(filter(is_pdf, SOURCES.rgl
 inventory, seen_fp, name_fps = [], {}, defaultdict(list)
 for pdf in pdfs:
     try:
-        doc = pymupdf.open(pdf)
+        n_pages = page_count(pdf)
     except Exception as e:
         inventory.append(dict(file=str(pdf), page="", fingerprint="", status="unreadable", duplicate_of="", out_name="", note=str(e)))
         continue
-    for i, pg in enumerate(doc):
-        pix = pg.get_pixmap(dpi=72, colorspace=pymupdf.csGRAY, alpha=False)
-        fp = hashlib.md5(pix.samples).hexdigest()
+    for i in range(n_pages):
+        fp = hashlib.md5(render_page(pdf, i, 72, gray=True).tobytes()).hexdigest()   # 72 dpi gray page fingerprint
         base = re.sub(r"[^\w\-. &]+", "_", pdf.stem).strip()
         if fp in seen_fp:
             inventory.append(dict(file=str(pdf), page=i, fingerprint=fp, status="duplicate", duplicate_of=seen_fp[fp]["out_name"],

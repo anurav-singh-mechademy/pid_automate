@@ -1,7 +1,7 @@
 # Tag-extraction pipeline definitions (same code as the 'Self-contained tag extraction' cell, minus its single-page run block).
 # PAGE_PATH/OUT_CSV below are unused here; batch_tags.py calls the functions per page.
 # Self-contained tag extraction for one page: full-page OCR -> RF-DETR bubbles -> attach text to bubbles -> tags.
-# Requires: pip install pymupdf pillow numpy torch rfdetr rapidocr
+# Requires: pip install pypdfium2 pillow numpy torch rfdetr rapidocr
 import csv
 import logging
 import re
@@ -10,11 +10,12 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import pymupdf
 import torch
 from PIL import Image
 from rapidocr import RapidOCR
 from rfdetr import RFDETRBase
+
+from pdfrender import page_count, render_page
 
 PAGE_PATH = Path("bhcp/SC62D1967_Ver1-3.pdf")  # .pdf/.png/.jpg
 PAGE_NO = 0
@@ -87,9 +88,7 @@ Image.MAX_IMAGE_PIXELS = None
 # ---------- page ----------
 def load_page(path, page_no=0, dpi=DPI):
     if path.suffix.lower() == ".pdf":
-        with pymupdf.open(path) as doc:
-            pix = doc[page_no].get_pixmap(dpi=dpi, colorspace=pymupdf.csRGB, alpha=False)
-        return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        return render_page(path, page_no, dpi)
     return Image.open(path).convert("RGB")
 
 

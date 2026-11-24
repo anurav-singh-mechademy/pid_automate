@@ -97,7 +97,7 @@ Account-specific values are kept out of the repo. Ask the team for the account a
 
 ## Updating
 
-Run everything from the repo root. Commit your changes first: the image tag is the commit, so the scripts refuse to run with uncommitted changes in `deploy/`, `batch/tag_pipeline.py` or `requirements.txt`.
+Run everything from the repo root. Commit your changes first: the image tag is the commit, so the scripts refuse to run with uncommitted changes in `deploy/`, `batch/tag_pipeline.py`, `batch/pdfrender.py` or `requirements.txt`.
 
 ```
 deploy/build.sh     # build <NAME>:<tag> locally (~5 min the first time, cached after)

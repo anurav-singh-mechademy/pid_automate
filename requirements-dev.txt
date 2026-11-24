@@ -1,0 +1,4 @@
+# Evaluation and survey tools only (batch/bench_tags.py, batch/eval_*.py, batch/survey_pdfs.py,
+# batch/pid_registry.py, pidgraph/vector.py). PyMuPDF is AGPL: never part of the shipped pipeline or images.
+-r requirements.txt
+pymupdf==1.28.2

@@ -315,15 +315,13 @@ def apply(rows, stages=STAGES, pages=None, cache=None):
 def pdf_pages(ledger_csv, dpi=75):
     """pages() for apply(): render each ledger page at low dpi, rotated as phase 1 did; bbox px are 300 dpi."""
     import csv
-    import pymupdf
-    from PIL import Image
+    from pdfrender import render_page
     led = {r["out_name"]: r for r in csv.DictReader(open(ledger_csv))}
     def get(sheet):
         L = led.get(sheet)
         if not L:
             return None
-        p = pymupdf.open(L["file"])[int(L["page"])].get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY, alpha=False)
-        img = Image.frombytes("L", (p.width, p.height), p.samples)
+        img = render_page(L["file"], int(L["page"]), dpi, gray=True)
         if int(L.get("rotation") or 0):
             img = img.rotate(int(L["rotation"]), expand=True)
         return img, dpi / 300, dpi / 25.4

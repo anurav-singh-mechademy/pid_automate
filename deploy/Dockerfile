@@ -18,7 +18,7 @@ ARG WEIGHTS_SHA256
 COPY --from=weights rfdetr_pid.pth /opt/models/rfdetr_pid.pth
 RUN test -n "$WEIGHTS_SHA256" && echo "$WEIGHTS_SHA256  /opt/models/rfdetr_pid.pth" | sha256sum -c -
 
-COPY batch/tag_pipeline.py deploy/handler.py ${LAMBDA_TASK_ROOT}/
+COPY batch/tag_pipeline.py batch/pdfrender.py deploy/handler.py ${LAMBDA_TASK_ROOT}/
 
 # every model file is fetched now, into the image; at run time the filesystem is read-only except /tmp
 ENV HF_HOME=/opt/cache/hf TORCH_HOME=/opt/cache/torch XDG_CACHE_HOME=/opt/cache MPLCONFIGDIR=/tmp/mpl \

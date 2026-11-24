@@ -16,7 +16,7 @@ need() {   # every named setting must be filled in (a value still in <angle brac
 }
 
 image_tag() {   # <commit>-<first 8 of the weights hash>: an image is tied to the code and the weights it was built from
-  if [ -n "$(git status --porcelain deploy batch/tag_pipeline.py requirements.txt)" ]; then
+  if [ -n "$(git status --porcelain deploy batch/tag_pipeline.py batch/pdfrender.py requirements.txt)" ]; then
     echo "commit your deploy/ changes first: the image is tagged with the commit" >&2
     exit 1
   fi
